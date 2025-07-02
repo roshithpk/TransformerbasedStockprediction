@@ -10,19 +10,39 @@ from ta.trend import EMAIndicator
 from ta.momentum import RSIIndicator
 
 # --- Transformer Model Definition ---
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=5000):
+        super(PositionalEncoding, self).__init__()
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * -(np.log(10000.0) / d_model))
+
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+
+        pe = pe.unsqueeze(0)
+        self.register_buffer("pe", pe)
+
+    def forward(self, x):
+        return x + self.pe[:, :x.size(1), :]
+
+
 class TransformerModel(nn.Module):
     def __init__(self, input_dim, d_model, nhead, num_layers, dim_feedforward=128):
         super(TransformerModel, self).__init__()
         self.input_fc = nn.Linear(input_dim, d_model)
+        self.pos_encoder = PositionalEncoding(d_model)
         encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward)
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         self.output_fc = nn.Linear(d_model, 1)
 
     def forward(self, src):
         src = self.input_fc(src)
+        src = self.pos_encoder(src)
         src = self.transformer(src)
         output = self.output_fc(src[:, -1, :])
         return output
+
 
 # --- Labeled Helper ---
 def prepare_data(data, n_steps=30):
