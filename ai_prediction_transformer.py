@@ -2,135 +2,115 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
+from datetime import timedelta
+import plotly.graph_objects as go
+from sklearn.preprocessing import MinMaxScaler
+from st_aggrid import AgGrid, GridOptionsBuilder
 import torch
 import torch.nn as nn
-from datetime import timedelta
-from sklearn.preprocessing import MinMaxScaler
-from ta.trend import EMAIndicator
-from ta.momentum import RSIIndicator
-
-# --- Transformer Model Definition ---
-class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_len=5000):
-        super(PositionalEncoding, self).__init__()
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2) * -(np.log(10000.0) / d_model))
-
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-
-        pe = pe.unsqueeze(0)
-        self.register_buffer("pe", pe)
-
-    def forward(self, x):
-        return x + self.pe[:, :x.size(1), :]
 
 
+# --- TRANSFORMER MODEL ---
 class TransformerModel(nn.Module):
-    def __init__(self, input_dim, d_model, nhead, num_layers, dim_feedforward=128):
-        super(TransformerModel, self).__init__()
-        self.input_fc = nn.Linear(input_dim, d_model)
-        self.pos_encoder = PositionalEncoding(d_model)
-        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward)
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-        self.output_fc = nn.Linear(d_model, 1)
+    def __init__(self, input_size, d_model=64, nhead=4, num_layers=2, dropout=0.1):
+        super().__init__()
+        self.input_linear = nn.Linear(input_size, d_model)
+        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dropout=dropout)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        self.output_linear = nn.Linear(d_model, 1)
 
     def forward(self, src):
-        src = self.input_fc(src)
-        src = self.pos_encoder(src)
-        src = self.transformer(src)
-        output = self.output_fc(src[:, -1, :])
+        src = self.input_linear(src)
+        src = self.transformer_encoder(src)
+        output = self.output_linear(src[:, -1, :])  # Use the last time step
         return output
 
 
-# --- Labeled Helper ---
-def prepare_data(data, n_steps=30):
-    X, y = [], []
-    for i in range(n_steps, len(data)):
-        X.append(data[i - n_steps:i])
-        y.append(data[i, 0])
-    return np.array(X), np.array(y)
+# --- PREPARE SEQUENCES ---
+def create_sequences(data, seq_len):
+    xs, ys = [], []
+    for i in range(len(data) - seq_len):
+        x = data[i:i+seq_len]
+        y = data[i+seq_len, 0]  # Predicting close
+        xs.append(x)
+        ys.append(y)
+    return np.array(xs), np.array(ys)
 
-# --- Technical Indicators ---
-def add_indicators(df):
-    close = df["Close"]
-    df["RSI"] = RSIIndicator(close).rsi()
-    df["EMA_20"] = EMAIndicator(close, window=20).ema_indicator()
-    df.fillna(method="bfill", inplace=True)
-    return df
 
-# --- Streamlit Function ---
+# --- MAIN TRANSFORMER PREDICTION FUNCTION ---
 def run_ai_prediction():
-    st.title("🤖 Transformer Stock Predictor")
+    st.title("📈 Transformer-based Stock Forecast")
 
-    col1, col2 = st.columns(2)
-    user_stock = col1.text_input("Enter Stock Symbol", value="INFY")
-    pred_days = col2.slider("Days to Forecast", 3, 10, 5)
+    with st.expander("⚙️ Settings", expanded=True):
+        col1, col2 = st.columns(2)
+        user_stock = col1.text_input("Stock Symbol (e.g., INFY)", value="INFY")
+        pred_days = col2.slider("Forecast Days", 5, 15, 7)
 
     if st.button("🚀 Predict with Transformer"):
-        ticker = user_stock.strip().upper() + ".NS"
-
-        with st.spinner("Downloading and preparing data..."):
-            df = yf.download(ticker, period="2y", progress=False)
+        ticker = f"{user_stock.upper().strip()}.NS"
+        try:
+            df = yf.download(ticker, period="2y", interval="1d", progress=False)
             if df.empty:
-                st.error("Stock data not found.")
+                st.error("No data found for this stock")
                 return
 
-            df = add_indicators(df)
-            features = ["Close", "RSI", "EMA_20"]
-
+            df.dropna(inplace=True)
+            features = ['Open', 'High', 'Low', 'Close', 'Volume']
+            data = df[features].copy()
             scaler = MinMaxScaler()
-            scaled = scaler.fit_transform(df[features])
-            X, y = prepare_data(scaled)
+            scaled = scaler.fit_transform(data)
 
+            seq_len = 30
+            X, y = create_sequences(scaled, seq_len)
             X_tensor = torch.tensor(X, dtype=torch.float32)
-            y_tensor = torch.tensor(y, dtype=torch.float32).view(-1, 1)
+            y_tensor = torch.tensor(y, dtype=torch.float32)
 
-            model = TransformerModel(input_dim=X.shape[2], d_model=64, nhead=4, num_layers=2)
-            criterion = nn.MSELoss()
+            model = TransformerModel(input_size=len(features))
+            loss_fn = nn.MSELoss()
             optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
-            for epoch in range(20):  # Short training for demo
-                model.train()
+            model.train()
+            for epoch in range(30):
                 optimizer.zero_grad()
-                output = model(X_tensor)
-                loss = criterion(output, y_tensor)
+                out = model(X_tensor)
+                loss = loss_fn(out.view(-1), y_tensor)
                 loss.backward()
                 optimizer.step()
 
-        st.success("✅ Model trained")
+            model.eval()
+            preds = []
+            input_seq = X_tensor[-1].unsqueeze(0)
+            last_known = df.copy()
 
-        # Forecasting
-        last_seq = scaled[-30:]
-        future_preds = []
-        df_forecast = df.copy()
+            for _ in range(pred_days):
+                with torch.no_grad():
+                    pred = model(input_seq).item()
+                new_row = np.concatenate(([pred], input_seq[0, -1, 1:].numpy()))  # keep other features
+                last_known.loc[last_known.index[-1] + timedelta(days=1)] = new_row[:len(features)]
+                new_scaled = scaler.transform(last_known[features].values[-seq_len:])
+                input_seq = torch.tensor(new_scaled[np.newaxis], dtype=torch.float32)
+                preds.append(pred)
 
-        model.eval()
-        for _ in range(pred_days):
-            inp = torch.tensor(last_seq, dtype=torch.float32).unsqueeze(0)
-            pred_scaled = model(inp).item()
+            forecast_dates = pd.date_range(start=last_known.index[-pred_days], periods=pred_days)
+            forecast_df = pd.DataFrame({"Date": forecast_dates, "Predicted Close": scaler.inverse_transform(np.hstack([np.array(preds).reshape(-1, 1), np.zeros((pred_days, len(features)-1))]))[:, 0]})
 
-            dummy_row = np.zeros((1, len(features)))
-            dummy_row[0, 0] = pred_scaled
-            next_close = scaler.inverse_transform(dummy_row)[0, 0]
-            future_preds.append(next_close)
+            st.success("🎯 Forecast Complete with Transformer")
 
-            next_date = df_forecast.index[-1] + timedelta(days=1)
-            new_row = pd.DataFrame([[np.nan]*df_forecast.shape[1]], columns=df_forecast.columns, index=[next_date])
-            new_row.at[next_date, "Close"] = next_close
-            df_forecast = pd.concat([df_forecast, new_row])
+            col1, col2 = st.columns(2)
+            col1.metric("Current Price", f"₹{df['Close'].iloc[-1]:.2f}")
+            col2.metric("Predicted Price", f"₹{forecast_df['Predicted Close'].iloc[0]:.2f}")
 
-            df_forecast = add_indicators(df_forecast)
-            last_seq = scaler.transform(df_forecast[features].iloc[-30:])
+            gb = GridOptionsBuilder.from_dataframe(forecast_df)
+            gb.configure_default_column(resizable=True, wrapText=True)
+            grid_options = gb.build()
 
-        forecast_df = pd.DataFrame({
-            "Date": pd.date_range(df.index[-1] + timedelta(days=1), periods=pred_days),
-            "Predicted Close": np.round(future_preds, 2)
-        })
+            AgGrid(forecast_df, gridOptions=grid_options, theme="balham", height=350)
 
-        st.subheader("📅 Forecasted Prices")
-        st.dataframe(forecast_df)
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=df.index[-60:], y=df['Close'].iloc[-60:], mode='lines', name='Historical'))
+            fig.add_trace(go.Scatter(x=forecast_df['Date'], y=forecast_df['Predicted Close'], mode='lines+markers', name='Predicted'))
+            fig.update_layout(title=f"{user_stock.upper()} Forecast", xaxis_title="Date", yaxis_title="Close Price")
+            st.plotly_chart(fig, use_container_width=True)
 
-        st.line_chart(forecast_df.set_index("Date"))
-
+        except Exception as e:
+            st.error(f"Prediction failed: {str(e)}")
