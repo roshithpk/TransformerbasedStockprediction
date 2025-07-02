@@ -69,7 +69,7 @@ def run_ai_prediction():
             optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
             model.train()
-            for epoch in range(30):
+            for epoch in range(10):
                 optimizer.zero_grad()
                 out = model(X_tensor)
                 loss = loss_fn(out.view(-1), y_tensor)
