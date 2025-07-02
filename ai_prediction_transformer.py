@@ -73,7 +73,7 @@ def run_ai_prediction():
             seq_len = 30
             X, y = create_sequences(scaled, seq_len)
             X_tensor = torch.tensor(X, dtype=torch.float32)
-            y_tensor = torch.tensor(y, dtype=torch.float32)
+            y_tensor = torch.tensor(y.flatten(), dtype=torch.float32)
 
             model = TransformerModel(input_size=len(features))
             loss_fn = nn.MSELoss()
