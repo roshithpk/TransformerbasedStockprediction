@@ -94,7 +94,8 @@ def run_ai_prediction():
 
             for _ in range(pred_days):
                 with torch.no_grad():
-                    pred = model(input_seq).item()
+                    pred = model(input_seq).detach().cpu().numpy().flatten()[0]
+
 
                 pred_value = pred if isinstance(pred, float) else float(pred)
                 pred_close = scaler.inverse_transform([[pred_value] + [0]*(len(features)-1)])[0][0]
