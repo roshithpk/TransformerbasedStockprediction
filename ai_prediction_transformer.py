@@ -9,7 +9,6 @@ from st_aggrid import AgGrid, GridOptionsBuilder
 import torch
 import torch.nn as nn
 
-
 # --- TRANSFORMER MODEL ---
 class TransformerModel(nn.Module):
     def __init__(self, input_size, d_model=64, nhead=4, num_layers=2, dropout=0.1):
@@ -22,7 +21,7 @@ class TransformerModel(nn.Module):
     def forward(self, src):
         src = self.input_linear(src)
         src = self.transformer_encoder(src)
-        output = self.output_linear(src[:, -1, :])  # Use the last time step
+        output = self.output_linear(src[:, -1, :])
         return output
 
 
@@ -30,8 +29,8 @@ class TransformerModel(nn.Module):
 def create_sequences(data, seq_len):
     xs, ys = [], []
     for i in range(len(data) - seq_len):
-        x = data[i:i+seq_len]
-        y = data[i+seq_len, 0]  # Predicting close
+        x = data[i:i + seq_len]
+        y = data[i + seq_len, 0]  # Only Close
         xs.append(x)
         ys.append(y)
     return np.array(xs), np.array(ys)
@@ -55,7 +54,7 @@ def run_ai_prediction():
                 return
 
             df.dropna(inplace=True)
-            features = ['Open', 'High', 'Low', 'Close', 'Volume']
+            features = ['Close']
             data = df[features].copy()
             scaler = MinMaxScaler()
             scaled = scaler.fit_transform(data)
@@ -85,23 +84,48 @@ def run_ai_prediction():
             for _ in range(pred_days):
                 with torch.no_grad():
                     pred = model(input_seq).item()
-                new_row = np.concatenate(([pred], input_seq[0, -1, 1:].numpy()))  # keep other features
-                last_known.loc[last_known.index[-1] + timedelta(days=1)] = new_row[:len(features)]
+                new_row = np.array([pred])
+                last_known.loc[last_known.index[-1] + timedelta(days=1)] = [np.nan] * len(df.columns)
+                last_known.at[last_known.index[-1], 'Close'] = scaler.inverse_transform([[pred]])[0, 0]
+
                 new_scaled = scaler.transform(last_known[features].values[-seq_len:])
                 input_seq = torch.tensor(new_scaled[np.newaxis], dtype=torch.float32)
                 preds.append(pred)
 
             forecast_dates = pd.date_range(start=last_known.index[-pred_days], periods=pred_days)
-            forecast_df = pd.DataFrame({"Date": forecast_dates, "Predicted Close": scaler.inverse_transform(np.hstack([np.array(preds).reshape(-1, 1), np.zeros((pred_days, len(features)-1))]))[:, 0]})
+            forecast_close = scaler.inverse_transform(
+                np.hstack([np.array(preds).reshape(-1, 1)]))[:, 0]
+            forecast_df = pd.DataFrame({"Date": forecast_dates, "Predicted Close": forecast_close})
 
             st.success("🎯 Forecast Complete with Transformer")
 
+            # --- Trading Signal ---
+            current_price = df['Close'].iloc[-1]
+            predicted_price = forecast_df['Predicted Close'].iloc[0]
+            pct_diff = ((predicted_price - current_price) / current_price) * 100
+
+            if pct_diff >= 2:
+                signal = "BUY"
+                reason = f"📈 Forecasted to rise by {pct_diff:.2f}%"
+            elif pct_diff <= -2:
+                signal = "SELL"
+                reason = f"📉 Forecasted to fall by {pct_diff:.2f}%"
+            else:
+                signal = "HOLD"
+                reason = f"🔄 Minimal change expected ({pct_diff:.2f}%)"
+
+            st.markdown("### 🧠 Model Signal")
+            if signal == "BUY":
+                st.success(f"✅ SIGNAL: **{signal}**  \n**Reason:** {reason}")
+            elif signal == "SELL":
+                st.error(f"❌ SIGNAL: **{signal}**  \n**Reason:** {reason}")
+            else:
+                st.warning(f"🔄 SIGNAL: **{signal}**  \n**Reason:** {reason}")
+
+            # --- Display Forecast Table ---
             col1, col2 = st.columns(2)
-            current_price = float(df['Close'].iloc[-1])
             col1.metric("Current Price", f"₹{current_price:.2f}")
-            
-            predicted_price = float(forecast_df['Predicted Close'].iloc[0])
-            col2.metric("Predicted Price", f"₹{predicted_price:.2f}")
+            col2.metric("Predicted Price", f"₹{predicted_price:.2f}", f"{pct_diff:.2f}%")
 
             gb = GridOptionsBuilder.from_dataframe(forecast_df)
             gb.configure_default_column(resizable=True, wrapText=True)
@@ -117,3 +141,6 @@ def run_ai_prediction():
 
         except Exception as e:
             st.error(f"Prediction failed: {str(e)}")
+
+if __name__ == "__main__":
+    run_ai_prediction()
