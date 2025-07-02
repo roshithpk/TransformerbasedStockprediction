@@ -46,7 +46,7 @@ def create_sequences(data, seq_len):
         y = data[i + seq_len, 0]  # Predict Close only
         xs.append(x)
         ys.append(y)
-    return np.array(xs), np.array(ys)
+    return np.array(xs), np.array(ys).flatten()
 
 # --- Main Function ---
 def run_ai_prediction():
