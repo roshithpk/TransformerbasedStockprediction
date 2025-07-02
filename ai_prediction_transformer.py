@@ -97,8 +97,11 @@ def run_ai_prediction():
             st.success("🎯 Forecast Complete with Transformer")
 
             col1, col2 = st.columns(2)
-            col1.metric("Current Price", f"₹{df['Close'].iloc[-1]:.2f}")
-            col2.metric("Predicted Price", f"₹{forecast_df['Predicted Close'].iloc[0]:.2f}")
+            current_price = float(df['Close'].iloc[-1])
+            col1.metric("Current Price", f"₹{current_price:.2f}")
+            
+            predicted_price = float(forecast_df['Predicted Close'].iloc[0])
+            col2.metric("Predicted Price", f"₹{predicted_price:.2f}")
 
             gb = GridOptionsBuilder.from_dataframe(forecast_df)
             gb.configure_default_column(resizable=True, wrapText=True)
