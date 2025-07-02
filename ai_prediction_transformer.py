@@ -100,8 +100,8 @@ def run_ai_prediction():
             st.success("🎯 Forecast Complete with Transformer")
 
             # --- Trading Signal ---
-            current_price = df['Close'].iloc[-1]
-            predicted_price = forecast_df['Predicted Close'].iloc[0]
+            current_price = float(df['Close'].iloc[-1])
+            predicted_price = float(forecast_df['Predicted Close'].iloc[0])
             pct_diff = ((predicted_price - current_price) / current_price) * 100
 
             if pct_diff >= 2:
