@@ -96,7 +96,9 @@ def run_ai_prediction():
                 with torch.no_grad():
                     pred = model(input_seq).item()
 
-                pred_close = scaler.inverse_transform([[pred] + [0]*(len(features)-1)])[0][0]
+                pred_value = pred if isinstance(pred, float) else float(pred)
+                pred_close = scaler.inverse_transform([[pred_value] + [0]*(len(features)-1)])[0][0]
+
                 new_row = pd.Series(index=last_known.columns, dtype='float64')
                 new_row['Close'] = pred_close
                 next_date = last_known.index[-1] + timedelta(days=1)
