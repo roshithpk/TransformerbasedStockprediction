@@ -5,8 +5,7 @@ import numpy as np
 from datetime import timedelta
 import plotly.graph_objects as go
 from sklearn.preprocessing import MinMaxScaler
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout
+from transformer_model import build_transformer_model
 from ta.momentum import RSIIndicator, StochasticOscillator
 from ta.trend import EMAIndicator, MACD, ADXIndicator
 from ta.volatility import BollingerBands
@@ -223,13 +222,7 @@ def run_ai_prediction():
                 X = X.reshape((X.shape[0], X.shape[1], len(features)))
                 
                 # 4. Build and Train Model
-                model = Sequential([
-                    LSTM(128, return_sequences=True, input_shape=(X.shape[1], X.shape[2])),
-                    Dropout(0.2),
-                    LSTM(64),
-                    Dropout(0.2),
-                    Dense(1)
-                ])
+                model build_transformer_model(input_shape=(X.shape[1], X.shape[2]))
                 model.compile(optimizer='adam', loss='mse')
                 model.fit(X, y, epochs=50, batch_size=32, verbose=0)
                 
