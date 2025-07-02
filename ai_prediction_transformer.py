@@ -8,8 +8,11 @@ from sklearn.preprocessing import MinMaxScaler
 from st_aggrid import AgGrid, GridOptionsBuilder
 import torch
 import torch.nn as nn
+from ta.momentum import RSIIndicator
+from ta.trend import EMAIndicator, MACD, ADXIndicator
+from ta.volatility import AverageTrueRange
 
-# --- TRANSFORMER MODEL ---
+# --- Transformer Model ---
 class TransformerModel(nn.Module):
     def __init__(self, input_size, d_model=64, nhead=4, num_layers=2, dropout=0.1):
         super().__init__()
@@ -24,21 +27,30 @@ class TransformerModel(nn.Module):
         output = self.output_linear(src[:, -1, :])
         return output
 
+# --- Feature Engineering ---
+def add_indicators(df):
+    df = df.copy()
+    df['RSI'] = RSIIndicator(df['Close']).rsi()
+    df['EMA20'] = EMAIndicator(df['Close'], window=20).ema_indicator()
+    df['MACD'] = MACD(df['Close']).macd()
+    df['ADX'] = ADXIndicator(df['High'], df['Low'], df['Close']).adx()
+    df['ATR'] = AverageTrueRange(df['High'], df['Low'], df['Close']).average_true_range()
+    df = df.dropna()
+    return df
 
-# --- PREPARE SEQUENCES ---
+# --- Sequence Creation ---
 def create_sequences(data, seq_len):
     xs, ys = [], []
     for i in range(len(data) - seq_len):
         x = data[i:i + seq_len]
-        y = data[i + seq_len, 0]  # Only Close
+        y = data[i + seq_len, 0]  # Predict Close only
         xs.append(x)
         ys.append(y)
     return np.array(xs), np.array(ys)
 
-
-# --- MAIN TRANSFORMER PREDICTION FUNCTION ---
+# --- Main Function ---
 def run_ai_prediction():
-    st.title("📈 Transformer-based Stock Forecast")
+    st.title("📈 Transformer-based Stock Forecast with Technical Indicators")
 
     with st.expander("⚙️ Settings", expanded=True):
         col1, col2 = st.columns(2)
@@ -53,11 +65,10 @@ def run_ai_prediction():
                 st.error("No data found for this stock")
                 return
 
-            df.dropna(inplace=True)
-            features = ['Close']
-            data = df[features].copy()
+            df = add_indicators(df)
+            features = ['Close', 'RSI', 'EMA20', 'MACD', 'ADX', 'ATR']
             scaler = MinMaxScaler()
-            scaled = scaler.fit_transform(data)
+            scaled = scaler.fit_transform(df[features])
 
             seq_len = 30
             X, y = create_sequences(scaled, seq_len)
@@ -69,10 +80,10 @@ def run_ai_prediction():
             optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
             model.train()
-            for epoch in range(40):
+            for epoch in range(10):
                 optimizer.zero_grad()
-                out = model(X_tensor)
-                loss = loss_fn(out.view(-1), y_tensor)
+                output = model(X_tensor)
+                loss = loss_fn(output.view(-1), y_tensor)
                 loss.backward()
                 optimizer.step()
 
@@ -84,24 +95,25 @@ def run_ai_prediction():
             for _ in range(pred_days):
                 with torch.no_grad():
                     pred = model(input_seq).item()
-                new_row = np.array([pred])
-                last_known.loc[last_known.index[-1] + timedelta(days=1)] = [np.nan] * len(df.columns)
-                last_known.at[last_known.index[-1], 'Close'] = scaler.inverse_transform([[pred]])[0, 0]
 
-                new_scaled = scaler.transform(last_known[features].values[-seq_len:])
-                input_seq = torch.tensor(new_scaled[np.newaxis], dtype=torch.float32)
+                pred_close = scaler.inverse_transform([[pred] + [0]*(len(features)-1)])[0][0]
+                new_row = pd.Series(index=last_known.columns, dtype='float64')
+                new_row['Close'] = pred_close
+                next_date = last_known.index[-1] + timedelta(days=1)
+                last_known.loc[next_date] = new_row
+                last_known = add_indicators(last_known)
+                last_scaled = scaler.transform(last_known[features].iloc[-seq_len:])
+                input_seq = torch.tensor(last_scaled[np.newaxis], dtype=torch.float32)
                 preds.append(pred)
 
             forecast_dates = pd.date_range(start=last_known.index[-pred_days], periods=pred_days)
             forecast_close = scaler.inverse_transform(
-                np.hstack([np.array(preds).reshape(-1, 1)]))[:, 0]
+                np.hstack([np.array(preds).reshape(-1, 1), np.zeros((pred_days, len(features)-1))]))[:, 0]
             forecast_df = pd.DataFrame({"Date": forecast_dates, "Predicted Close": forecast_close})
 
-            st.success("🎯 Forecast Complete with Transformer")
-
-            # --- Trading Signal ---
-            current_price = float(df['Close'].iloc[-1])
-            predicted_price = float(forecast_df['Predicted Close'].iloc[0])
+            # --- Display Signal ---
+            current_price = df['Close'].iloc[-1]
+            predicted_price = forecast_df['Predicted Close'].iloc[0]
             pct_diff = ((predicted_price - current_price) / current_price) * 100
 
             if pct_diff >= 2:
@@ -122,11 +134,12 @@ def run_ai_prediction():
             else:
                 st.warning(f"🔄 SIGNAL: **{signal}**  \n**Reason:** {reason}")
 
-            # --- Display Forecast Table ---
+            # --- Show Metrics ---
             col1, col2 = st.columns(2)
             col1.metric("Current Price", f"₹{current_price:.2f}")
             col2.metric("Predicted Price", f"₹{predicted_price:.2f}", f"{pct_diff:.2f}%")
 
+            # --- Show Forecast Table ---
             gb = GridOptionsBuilder.from_dataframe(forecast_df)
             gb.configure_default_column(resizable=True, wrapText=True)
             grid_options = gb.build()
