@@ -1,55 +1,158 @@
 import streamlit as st
-from data_utils import get_stock_data, prepare_data
-from model import build_transformer_model
-from visualize import plot_attention_heatmap
-from sklearn.preprocessing import MinMaxScaler
-import numpy as np
 import pandas as pd
+import yfinance as yf
+from ta.momentum import RSIIndicator
+from ta.trend import EMAIndicator
+from ta.trend import MACD, ADXIndicator
+from ta.volatility import AverageTrueRange
+import ai_prediction_transformer
 
-st.title("📈 Transformer-Based Stock Predictor")
+if "page" not in st.session_state:
+    st.session_state.page = "main"
 
-symbol = st.text_input("Enter Stock Symbol (e.g., INFY)", value="INFY")
-predict_days = st.slider("Forecast days", 5, 15, 7)
+# --- APP SETUP ---
+st.set_page_config(page_title="\ud83d\udcca Indian Swing Trade Scanner", layout="wide")
+st.title("\ud83d\udcc8 Indian Swing Trade Scanner (5-10 Days)")
 
-if st.button("Predict"):
-    with st.spinner("Fetching and processing data..."):
-        df = get_stock_data(symbol)
-        features = ['Close']  # You can expand to RSI, EMA, etc.
+# --- LOAD STOCK LIST ---
+@st.cache_data
+def load_stocks():
+    df = pd.read_csv("stocks.csv")  # Ensure this CSV has Ticker, Name, Category
+    return df
 
-        scaled_data, scaler = prepare_data(df[features])
-        X, y = [], []
-        window = 30
-        for i in range(window, len(scaled_data)):
-            X.append(scaled_data[i-window:i])
-            y.append(scaled_data[i, 0])
+stock_df = load_stocks()
 
-        X, y = np.array(X), np.array(y)
+# --- SIDEBAR FILTERS ---
+st.sidebar.header("\ud83d\udd27 Filters")
 
-    model = build_transformer_model(input_shape=X.shape[1:])
-    model.compile(optimizer='adam', loss='mse')
-    model.fit(X, y, epochs=20, batch_size=32, verbose=0)
+min_volume = st.sidebar.slider("Min Volume (x 5-Day Avg)", 1.0, 5.0, 1.5)
+rsi_low = st.sidebar.slider("Min RSI", 10, 50, 30)
+rsi_high = st.sidebar.slider("Max RSI", 50, 90, 75)
+min_price = st.sidebar.slider("Min Price (₹)", 10, 1000, 100)
+max_price = st.sidebar.slider("Max Price (₹)", 1000, 10000, 3000)
+breakout_required = st.sidebar.checkbox("\ud83d\udcc8 Current Price > Last 2 Days' Closes", value=True)
+trend_required = st.sidebar.checkbox("\ud83d\udfe2 Price Above 20 EMA", value=True)
 
-    st.success("Model trained. Predicting future...")
-    predictions, attention_scores = [], []
-    last_sequence = X[-1]
+# --- MAIN FILTER FOR CATEGORY ---
+st.subheader("\ud83d\udcc2 Select Stock Category to Scan")
+categories = ["All"] + sorted(stock_df["Category"].dropna().unique())
+selected_category = st.selectbox("Category", categories, index=0)
 
-    for _ in range(predict_days):
-        input_seq = last_sequence[np.newaxis, ...]
-        pred = model(input_seq, training=False).numpy()[0, 0]
-        predictions.append(pred)
+if selected_category == "All":
+    filtered_df = stock_df
+else:
+    filtered_df = stock_df[stock_df["Category"] == selected_category]
 
-        att = model.get_layer("attention").output.numpy()
-        attention_scores.append(att[0])
+filtered_tickers = filtered_df["Ticker"].dropna().unique().tolist()
 
-        # Shift window and append
-        last_sequence = np.append(last_sequence[1:], [[pred]], axis=0)
+# --- SCAN FUNCTION ---
+def scan_stock(ticker):
+    try:
+        data = yf.download(ticker, period="1mo", progress=False, auto_adjust=False)
+        if data.empty or len(data) < 20:
+            return None
 
-    predicted_prices = scaler.inverse_transform(
-        np.concatenate([np.array(predictions).reshape(-1, 1)] + [np.zeros_like(np.array(predictions).reshape(-1, 1))]* (scaled_data.shape[1] - 1), axis=1)
-    )[:, 0]
+        data = data.dropna()
+        close_prices = pd.Series(data["Close"].values.flatten(), dtype=float)
+        volumes = pd.Series(data["Volume"].values.flatten(), dtype=float)
 
-    future_dates = pd.date_range(df.index[-1] + pd.Timedelta(days=1), periods=predict_days)
-    pred_df = pd.DataFrame({"Date": future_dates, "Predicted Close": predicted_prices})
+        if close_prices.empty or volumes.empty:
+            return None
 
-    st.line_chart(pred_df.set_index("Date"))
-    plot_attention_heatmap(attention_scores, window)
+        ema_20 = EMAIndicator(close=close_prices, window=20).ema_indicator()
+        rsi = RSIIndicator(close=close_prices, window=14).rsi()
+
+        latest_close = close_prices.iloc[-1]
+        latest_volume = volumes.iloc[-1]
+        avg_volume_5d = volumes.rolling(window=5).mean().iloc[-1]
+        latest_rsi = rsi.iloc[-1]
+
+        breakout_ok = latest_close > close_prices.iloc[-2] and latest_close > close_prices.iloc[-3] if breakout_required else True
+        volume_ok = latest_volume > avg_volume_5d * min_volume
+        trend_ok = latest_close > ema_20.iloc[-1] if trend_required else True
+        rsi_ok = rsi_low < latest_rsi < rsi_high
+        price_ok = min_price <= latest_close <= max_price
+
+        if all([volume_ok, trend_ok, rsi_ok, breakout_ok, price_ok]):
+            return {
+                "Stock": ticker.replace(".NS", ""),
+                "Price (₹)": f"₹{latest_close:.2f}",
+                "Volume (x)": f"{latest_volume / avg_volume_5d:.1f}",
+                "RSI": f"{latest_rsi:.1f}",
+                "Trend": "\ud83d\udfe2" if latest_close > ema_20.iloc[-1] else "\ud83d\udd34",
+                "Why Buy?": "\ud83d\udd25 2-Day Momentum + Volume Surge"
+            }
+    except Exception as e:
+        st.error(f"Error scanning {ticker}: {str(e)}")
+    return None
+
+# --- SCAN SELECTED STOCKS ---
+if st.button("\ud83d\udd0d Scan Selected Stocks"):
+    with st.spinner("Scanning selected stocks..."):
+        results = []
+        for ticker in filtered_tickers:
+            result = scan_stock(ticker)
+            if result:
+                results.append(result)
+    if results:
+        st.success(f"\u2705 Found {len(results)} potential swing trades.")
+        st.dataframe(pd.DataFrame(results), hide_index=True)
+    else:
+        st.warning("\u26a0\ufe0f No stocks matched the criteria. Adjust your filters and try again.")
+
+# --- ANALYZE SPECIFIC STOCK ---
+st.markdown("---")
+st.subheader("\ud83d\udd0e Analyze a Specific Stock")
+user_stock = st.text_input("Enter NSE Stock Symbol (e.g., INFY)")
+
+if user_stock:
+    full_ticker = user_stock.upper().strip() + ".NS"
+    try:
+        data = yf.download(full_ticker, period="1mo", progress=False)
+        if not data.empty and len(data) > 14:
+            data = data.dropna()
+            close_prices = pd.Series(data["Close"].values.flatten(), index=data.index)
+            volumes = pd.Series(data["Volume"].values.flatten(), index=data.index)
+
+            ema_20 = EMAIndicator(close=close_prices, window=20).ema_indicator()
+            rsi = RSIIndicator(close=close_prices, window=14).rsi()
+
+            latest_close = close_prices.iloc[-1]
+            latest_volume = volumes.iloc[-1]
+            avg_volume_5d = volumes.rolling(window=5).mean().iloc[-1]
+            latest_rsi = rsi.iloc[-1]
+            trend = "\ud83d\udfe2" if latest_close > ema_20.iloc[-1] else "\ud83d\udd34"
+
+            remarks = []
+            if latest_close <= close_prices.iloc[-2] or latest_close <= close_prices.iloc[-3]:
+                remarks.append("Price not above last 2 days")
+            if latest_volume < avg_volume_5d * min_volume:
+                remarks.append("Low volume (vs 5-day avg)")
+            if not (rsi_low < latest_rsi < rsi_high):
+                remarks.append("RSI not in range")
+            if latest_close < min_price or latest_close > max_price:
+                remarks.append("Price not in range")
+
+            st.markdown("#### \ud83d\udd2c Result:")
+            result = {
+                "Stock": user_stock.upper(),
+                "Price (₹)": f"₹{latest_close:.2f}",
+                "Volume (x)": f"{latest_volume / avg_volume_5d:.1f}",
+                "RSI": f"{latest_rsi:.1f}",
+                "Trend": trend,
+                "Remarks?": "\u2705 Good for Swing Trade" if not remarks else "\u274c " + ", ".join(remarks)
+            }
+            st.dataframe(pd.DataFrame([result]), hide_index=True)
+        else:
+            st.error("\u274c Not enough data for analysis.")
+    except Exception as e:
+        st.error(f"Error fetching data for {user_stock.upper()}: {str(e)}")
+
+# --- AI BUTTON ---
+st.markdown("---")
+ai_prediction_transformer.run_ai_prediction()
+
+
+# --- FOOTER ---
+st.markdown("---")
+st.caption("⚡ Developed by Roshith •  Please feed your comments to roshith77@gmail.com")
