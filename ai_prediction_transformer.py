@@ -20,6 +20,7 @@ class TransformerModel(nn.Module):
         encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dropout=dropout)
         self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         self.output_linear = nn.Linear(d_model, 1)
+        st.write("✅Hi:")
 
     def forward(self, src):
         src = self.input_linear(src)
