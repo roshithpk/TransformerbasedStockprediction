@@ -149,7 +149,7 @@ def run_ai_prediction():
 
 
             # --- Prediction ---
-            # --- Refactored Prediction Loop ---
+
             model.eval()
             preds = []
             input_seq = X_tensor[-1].unsqueeze(0)
@@ -158,35 +158,34 @@ def run_ai_prediction():
             for i in range(pred_days):
                 with torch.no_grad():
                     pred = model(input_seq).item()
+            
                 st.write(f"🔢 Forecast {i+1}: Raw prediction value: {pred}")
             
-                # Step 1: Copy last row’s scaled features
-                scaled_input = np.zeros((1, len(features)))
-                scaled_input[0][0] = pred  # Only Close is set, others zero
-            
-                # Step 2: Inverse transform to get real Close value
-                pred_close = scaler.inverse_transform(scaled_input)[0][0]
+                # ✅ Use last known scaled row for realistic inverse transformation
+                last_scaled_row = scaler.transform(last_known[features].iloc[-1:].values)[0]
+                last_scaled_row[0] = pred  # Replace only the 'Close' value
+                pred_close = scaler.inverse_transform([last_scaled_row])[0][0]
                 st.write(f"📊 Inverse transformed Close = {pred_close}")
-   
             
-                # Step 3: Prepare new row with predicted close, and add placeholder values for others
-                new_row = pd.DataFrame(columns=last_known.columns)
-                new_row.loc[0] = np.nan
+                # 🆕 Prepare new row with only Close (others will be computed using indicators)
+                new_row = pd.DataFrame({col: [np.nan] for col in last_known.columns})
                 new_row.index = [last_known.index[-1] + timedelta(days=1)]
                 new_row['Close'] = pred_close
             
+                # Add new row and recompute indicators
                 last_known = pd.concat([last_known, new_row])
-                last_known = add_indicators(last_known)  # Update indicators
+                last_known = add_indicators(last_known)
             
-                # Step 4: Re-scale updated last sequence
+                # Rescale last sequence for next input
                 last_scaled_seq = scaler.transform(last_known[features].iloc[-seq_len:])
                 input_seq = torch.tensor(last_scaled_seq[np.newaxis], dtype=torch.float32)
             
                 st.write(f"📅 Added row for date {new_row.index[0].date()} with Close = {pred_close}")
                 st.write(f"📈 Input to model for next step — shape: {input_seq.shape}")
                 st.write(f"📈 Last sequence to model: {input_seq.numpy().squeeze()[-1]}")
-                
-                preds.append(pred_close)  # Append real-world Close
+            
+                preds.append(pred_close)
+
 
 
             # Forecast dates from *next day*
