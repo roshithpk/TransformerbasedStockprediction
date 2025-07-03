@@ -161,13 +161,13 @@ def run_ai_prediction():
                 st.write(f"🔢 Forecast {i+1}: Raw prediction value: {pred}")
             
                 # Step 1: Copy last row’s scaled features
-                last_scaled_row = last_known[features].iloc[-1].copy()
-                last_scaled_row['Close'] = pred  # Replace only Close
+                scaled_input = np.zeros((1, len(features)))
+                scaled_input[0][0] = pred  # Only Close is set, others zero
             
                 # Step 2: Inverse transform to get real Close value
-                inverse_input = np.array([last_scaled_row.values])
-                pred_close = scaler.inverse_transform(inverse_input)[0][0]
+                pred_close = scaler.inverse_transform(scaled_input)[0][0]
                 st.write(f"📊 Inverse transformed Close = {pred_close}")
+   
             
                 # Step 3: Prepare new row with predicted close, and add placeholder values for others
                 new_row = pd.DataFrame(columns=last_known.columns)
