@@ -5,7 +5,7 @@ import numpy as np
 from datetime import timedelta
 import plotly.graph_objects as go
 from sklearn.preprocessing import MinMaxScaler
-from st_aggrid import AgGrid, GridOptionsBuilder
+from st_aggrid import AgGrid, GridfvOptionsBuilder
 import torch
 import torch.nn as nn
 from ta.momentum import RSIIndicator
@@ -106,6 +106,9 @@ def run_ai_prediction():
             model = TransformerModel(input_size=len(features))
             loss_fn = nn.MSELoss()
             optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+            # --- Training ---
+            progress_bar = st.progress(0)
+            status_text = st.empty()
 
             model.train()
             for epoch in range(50):
@@ -114,6 +117,11 @@ def run_ai_prediction():
                 loss = loss_fn(output.view(-1), y_tensor)
                 loss.backward()
                 optimizer.step()
+
+             # Update progress
+    percent_complete = int(((epoch + 1) / 50) * 100)
+    progress_bar.progress(percent_complete)
+    status_text.text(f"Training progress: {percent_complete}% (Epoch {epoch+1}/50)")
 
             model.eval()
             preds = []
