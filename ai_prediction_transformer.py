@@ -104,35 +104,48 @@ def run_ai_prediction():
             X_tensor = torch.tensor(X, dtype=torch.float32)
             y_tensor = torch.tensor(y, dtype=torch.float32)
 
-            model = TransformerModel(
-                input_size=len(features),
-                d_model=64,
-                nhead=4,
-                num_layers=2,
-                dropout=0.2
-            )
+# Let user choose whether to load or train
+            model = None
+            use_saved = st.radio("⚙️ Use saved model?", ["Train New Model", "Load Saved Model"])
+            
+            if use_saved == "Load Saved Model":
+                model = load_model_dialog(TransformerModel, input_size=len(features))
+            
+            # If not loaded, train a new model
+            if model is None:
+                model = TransformerModel(
+                    input_size=len(features),
+                    d_model=128,
+                    nhead=8,
+                    num_layers=4,
+                    dropout=0.2
+                )
+            
+                loss_fn = nn.MSELoss()
+                optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+            
+                # --- Training with Progress Bar ---
+                model.train()
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+            
+                for epoch in range(50):
+                    optimizer.zero_grad()
+                    output = model(X_tensor)
+                    loss = loss_fn(output.view(-1), y_tensor)
+                    loss.backward()
+                    optimizer.step()
+            
+                    percent_complete = int(((epoch + 1) / 50) * 100)
+                    progress_bar.progress(percent_complete)
+                    status_text.text(f"Training progress: {percent_complete}% (Epoch {epoch+1}/50)")
+            
+                status_text.text("✅ Training completed!")
+            
+                # Ask user to save the trained model
+                if st.checkbox("💾 Save this trained model?"):
+                    save_model_dialog(model, stock_name=user_stock, last_date=df.index[-1].date())
 
-            loss_fn = nn.MSELoss()
-            optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-
-            # --- Training with Progress Bar ---
-            model.train()
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-
-            for epoch in range(50):
-                optimizer.zero_grad()
-                output = model(X_tensor)
-                loss = loss_fn(output.view(-1), y_tensor)
-                loss.backward()
-                optimizer.step()
-
-                # Update progress
-                percent_complete = int(((epoch + 1) / 50) * 100)
-                progress_bar.progress(percent_complete)
-                status_text.text(f"Training progress: {percent_complete}% (Epoch {epoch+1}/50)")
-
-            status_text.text("✅ Training completed!")
 
             # --- Prediction ---
             model.eval()
