@@ -75,6 +75,7 @@ def run_ai_prediction():
 
             seq_len = 30
             X, y = create_sequences(scaled, seq_len)
+            st.write("✅ After sequence creation:")
             st.write("✅ X shape:", X.shape)
             st.write("✅ y shape:", y.shape)
 
