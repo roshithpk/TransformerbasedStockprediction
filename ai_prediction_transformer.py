@@ -2,7 +2,7 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
-from datetime import timedelta
+from datetime import timedelta, datetime
 import plotly.graph_objects as go
 from sklearn.preprocessing import MinMaxScaler
 from st_aggrid import AgGrid, GridOptionsBuilder
@@ -12,6 +12,14 @@ from ta.momentum import RSIIndicator
 from ta.trend import EMAIndicator, MACD, ADXIndicator
 from ta.volatility import AverageTrueRange
 import math
+
+# --- Helper function to skip weekends ---
+def next_business_day(date):
+    """Get the next business day (skips weekends)"""
+    next_day = date + timedelta(days=1)
+    while next_day.weekday() >= 5:  # 5=Saturday, 6=Sunday
+        next_day += timedelta(days=1)
+    return next_day
 
 # --- Positional Encoding ---
 class PositionalEncoding(nn.Module):
@@ -97,6 +105,9 @@ def run_ai_prediction():
                 st.error("No data found for this stock")
                 return
 
+            # Ensure we only have business days in historical data
+            df = df[df.index.dayofweek < 5]  # 0-4 = Monday-Friday
+
             df = add_indicators(df)
             features = ['Close', 'RSI', 'EMA20', 'MACD', 'ADX', 'ATR']
             scaler = MinMaxScaler()
@@ -139,10 +150,15 @@ def run_ai_prediction():
             # --- Prediction with Proper Sequence Updating ---
             model.eval()
             preds = []
+            pred_dates = []
             current_sequence = X_tensor[-1:].clone()  # Start with last known sequence
             last_known = df.copy()
+            current_date = last_known.index[-1]
             
             for i in range(pred_days):
+                # Skip weekends
+                current_date = next_business_day(current_date)
+                
                 with torch.no_grad():
                     pred_scaled = model(current_sequence).item()
                     st.write(f"🔢 Forecast {i+1}: Raw prediction value: {pred_scaled}")
@@ -156,11 +172,10 @@ def run_ai_prediction():
                 st.write(f"📊 Inverse transformed Close = {pred_close}")
                 
                 # Update dataframe with new prediction
-                new_date = last_known.index[-1] + timedelta(days=1)
                 new_row_df = pd.DataFrame(
                     [[pred_close] + [np.nan]*(len(last_known.columns)-1)],
                     columns=last_known.columns,
-                    index=[new_date]
+                    index=[current_date]
                 )
                 last_known = pd.concat([last_known, new_row_df])
                 
@@ -174,16 +189,16 @@ def run_ai_prediction():
                 current_sequence = torch.roll(current_sequence, shifts=-1, dims=1)
                 current_sequence[0, -1] = torch.tensor(new_scaled[-1])
                 
-                st.write(f"📅 Added row for date {new_date.date()} with Close = {pred_close}")
+                st.write(f"📅 Added row for date {current_date.date()} with Close = {pred_close}")
                 st.write(f"📈 Input to model for next step — shape: {current_sequence.shape}")
                 st.write(f"📈 Last element in sequence: {current_sequence[0,-1].numpy()}")
                 
                 preds.append(pred_close)
+                pred_dates.append(current_date)
 
             # --- Generate Forecast DataFrame ---
-            forecast_dates = [df.index[-1] + timedelta(days=i+1) for i in range(pred_days)]
             forecast_df = pd.DataFrame({
-                "Date": forecast_dates,
+                "Date": pred_dates,
                 "Predicted Close": preds
             })
 
@@ -236,7 +251,7 @@ def run_ai_prediction():
                 name='Predicted'
             ))
             fig.update_layout(
-                title=f"{user_stock.upper()} Forecast",
+                title=f"{user_stock.upper()} Forecast (Business Days Only)",
                 xaxis_title="Date",
                 yaxis_title="Close Price"
             )
