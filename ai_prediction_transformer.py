@@ -137,10 +137,18 @@ def run_ai_prediction():
                 st.write(f"🔢 Forecast {i+1}: Raw prediction value: {pred}")
                 st.write(f"📊 Input to scaler.inverse_transform (pred only): {[pred] + [0]*(len(features)-1)}")
 
-                pred_close = scaler.inverse_transform([[pred] + [0]*(len(features)-1)])[0][0]
-                st.write(f"💡 Predicted Close after inverse transform: {pred_close}")
+                # Copy last row’s feature values and replace Close
+                last_features = last_known[features].iloc[-1].copy()
+                last_features['Close'] = pred  # Replace only Close with new prediction
+                
+                # Inverse transform using realistic indicator values (not zeroes)
+                predicted_row_scaled = last_features.values
+                pred_close = scaler.inverse_transform([predicted_row_scaled])[0][0]
+                
+                # Prepare new row with predicted Close
                 new_row = pd.Series(index=last_known.columns, dtype='float64')
                 new_row['Close'] = pred_close
+
                 next_date = last_known.index[-1] + timedelta(days=1)
                 last_known.loc[next_date] = new_row
                 last_known = add_indicators(last_known)
