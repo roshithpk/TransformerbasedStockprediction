@@ -134,7 +134,7 @@ def run_ai_prediction():
             progress_bar = st.progress(0)
             status_text = st.empty()
             
-            for epoch in range(50):
+            for epoch in range(30):
                 optimizer.zero_grad()
                 output = model(X_tensor)
                 loss = loss_fn(output.view(-1), y_tensor)
