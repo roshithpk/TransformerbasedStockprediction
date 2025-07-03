@@ -52,10 +52,19 @@ def add_indicators(df):
     st.write("hi")
     df['RSI'] = RSIIndicator(close=df['Close'].squeeze(), window=14).rsi()
     st.write("hi")
-    df['EMA20'] = EMAIndicator(close=df['Close'], window=20).ema_indicator()
-    df['MACD'] = MACD(close=df['Close']).macd()
-    df['ADX'] = ADXIndicator(high=df['High'], low=df['Low'], close=df['Close']).adx()
-    df['ATR'] = AverageTrueRange(high=df['High'], low=df['Low'], close=df['Close']).average_true_range()
+    df['EMA20'] = EMAIndicator(close=df['Close'].squeeze(), window=20).ema_indicator()
+    df['MACD'] = MACD(close=df['Close'].squeeze()).macd()
+    df['ADX'] = ADXIndicator(
+        high=df['High'].squeeze(),
+        low=df['Low'].squeeze(),
+        close=df['Close'].squeeze()
+    ).adx()
+    df['ATR'] = AverageTrueRange(
+        high=df['High'].squeeze(),
+        low=df['Low'].squeeze(),
+        close=df['Close'].squeeze()
+    ).average_true_range()
+    
     df.dropna(inplace=True)
     return df
 
