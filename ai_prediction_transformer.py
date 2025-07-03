@@ -49,22 +49,20 @@ class TransformerModel(nn.Module):
 # --- Feature Engineering ---
 def add_indicators(df):
     df = df.copy()
-    st.write("hi")
-    df['RSI'] = RSIIndicator(close=df['Close'].squeeze(), window=14).rsi()
-    st.write("hi")
-    df['EMA20'] = EMAIndicator(close=df['Close'].squeeze(), window=20).ema_indicator()
-    df['MACD'] = MACD(close=df['Close'].squeeze()).macd()
+    df['RSI'] = RSIIndicator(close=df['Close'].astype(float).squeeze(), window=14).rsi()
+    df['EMA20'] = EMAIndicator(close=df['Close'].astype(float).squeeze(), window=20).ema_indicator()
+    df['MACD'] = MACD(close=df['Close'].astype(float).squeeze()).macd()
     df['ADX'] = ADXIndicator(
-        high=df['High'].squeeze(),
-        low=df['Low'].squeeze(),
-        close=df['Close'].squeeze()
+        high=df['High'].astype(float).squeeze(),
+        low=df['Low'].astype(float).squeeze(),
+        close=df['Close'].astype(float).squeeze()
     ).adx()
     df['ATR'] = AverageTrueRange(
-        high=df['High'].squeeze(),
-        low=df['Low'].squeeze(),
-        close=df['Close'].squeeze()
+        high=df['High'].astype(float).squeeze(),
+        low=df['Low'].astype(float).squeeze(),
+        close=df['Close'].astype(float).squeeze()
     ).average_true_range()
-    
+
     df.dropna(inplace=True)
     return df
 
@@ -141,8 +139,8 @@ def run_ai_prediction():
                 np.hstack([np.array(preds).reshape(-1, 1), np.zeros((pred_days, len(features)-1))]))[:, 0]
             forecast_df = pd.DataFrame({"Date": forecast_dates, "Predicted Close": forecast_close})
 
-            current_price = df['Close'].iloc[-1]
-            predicted_price = forecast_df['Predicted Close'].iloc[0]
+            current_price = float(df['Close'].iloc[-1])
+            predicted_price = float(forecast_df['Predicted Close'].iloc[0])
             pct_diff = ((predicted_price - current_price) / current_price) * 100
 
             if pct_diff >= 2:
