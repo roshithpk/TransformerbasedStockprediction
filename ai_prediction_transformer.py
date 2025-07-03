@@ -50,7 +50,7 @@ class TransformerModel(nn.Module):
 def add_indicators(df):
     df = df.copy()
     st.write("hi")
-    df['RSI'] = RSIIndicator(close=df['Close'], window=14).rsi().values
+    df['RSI'] = RSIIndicator(close=df['Close'].squeeze(), window=14).rsi()
     st.write("hi")
     df['EMA20'] = EMAIndicator(close=df['Close'], window=20).ema_indicator()
     df['MACD'] = MACD(close=df['Close']).macd()
