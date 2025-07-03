@@ -20,7 +20,6 @@ class TransformerModel(nn.Module):
         encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dropout=dropout)
         self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         self.output_linear = nn.Linear(d_model, 1)
-        st.write("✅Hi:")
 
     def forward(self, src):
         src = self.input_linear(src)
@@ -68,13 +67,19 @@ def run_ai_prediction():
 
             df = add_indicators(df)
             features = ['Close', 'RSI', 'EMA20', 'MACD', 'ADX', 'ATR']
+            st.write("✅ Features:", features)
+
             scaler = MinMaxScaler()
             scaled = scaler.fit_transform(df[features])
+            st.write("✅ Scaled shape:", scaled.shape)
 
             seq_len = 30
             X, y = create_sequences(scaled, seq_len)
+            st.write("✅ X shape:", X.shape)
+            st.write("✅ y shape:", y.shape)
+
             X_tensor = torch.tensor(X, dtype=torch.float32)
-            y_tensor = torch.tensor(y.flatten(), dtype=torch.float32)
+            y_tensor = torch.tensor(y, dtype=torch.float32)
 
             model = TransformerModel(input_size=len(features))
             loss_fn = nn.MSELoss()
@@ -93,27 +98,35 @@ def run_ai_prediction():
             input_seq = X_tensor[-1].unsqueeze(0)
             last_known = df.copy()
 
-            for _ in range(pred_days):
+            for i in range(pred_days):
                 with torch.no_grad():
                     pred = model(input_seq).detach().cpu().numpy().flatten()[0]
-                    st.write(f"🔢 Step {i+1} — Raw predicted value:", pred)
+                st.write(f"🔁 Day {i+1} | Scaled prediction:", pred)
 
-                pred_value = pred if isinstance(pred, float) else float(pred)
-                pred_close = scaler.inverse_transform([[pred_value] + [0]*(len(features)-1)])[0][0]
+                inverse_input = [[pred] + [0] * (len(features) - 1)]
+                st.write(f"🔁 Day {i+1} | Inverse input shape:", np.array(inverse_input).shape)
+
+                pred_close = scaler.inverse_transform(inverse_input)[0][0]
+                st.write(f"🔁 Day {i+1} | Predicted close:", pred_close)
 
                 new_row = pd.Series(index=last_known.columns, dtype='float64')
                 new_row['Close'] = pred_close
                 next_date = last_known.index[-1] + timedelta(days=1)
                 last_known.loc[next_date] = new_row
                 last_known = add_indicators(last_known)
+
                 last_scaled = scaler.transform(last_known[features].iloc[-seq_len:])
+                st.write(f"🔁 Day {i+1} | New input seq shape:", last_scaled.shape)
+
                 input_seq = torch.tensor(last_scaled[np.newaxis], dtype=torch.float32)
                 preds.append(pred)
 
             forecast_dates = pd.date_range(start=last_known.index[-pred_days], periods=pred_days)
             forecast_close = scaler.inverse_transform(
-                np.hstack([np.array(preds).reshape(-1, 1), np.zeros((pred_days, len(features)-1))]))[:, 0]
+                np.hstack([np.array(preds).reshape(-1, 1), np.zeros((pred_days, len(features)-1))])
+            )[:, 0]
             forecast_df = pd.DataFrame({"Date": forecast_dates, "Predicted Close": forecast_close})
+            st.write("✅ Forecast DF:", forecast_df)
 
             # --- Display Signal ---
             current_price = df['Close'].iloc[-1]
@@ -157,7 +170,7 @@ def run_ai_prediction():
             st.plotly_chart(fig, use_container_width=True)
 
         except Exception as e:
-            st.error(f"Prediction failed: {str(e)}")
+            st.error(f"❌ Prediction failed: {str(e)}")
 
 if __name__ == "__main__":
     run_ai_prediction()
