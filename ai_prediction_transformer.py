@@ -119,9 +119,11 @@ def run_ai_prediction():
                 optimizer.step()
 
              # Update progress
-    percent_complete = int(((epoch + 1) / 50) * 100)
-    progress_bar.progress(percent_complete)
-    status_text.text(f"Training progress: {percent_complete}% (Epoch {epoch+1}/50)")
+                percent_complete = int(((epoch + 1) / 50) * 100)
+                progress_bar.progress(percent_complete)
+                status_text.text(f"Training progress: {percent_complete}% (Epoch {epoch+1}/50)")
+            # Clear progress bar after done
+            status_text.text("✅ Training completed!")
 
             model.eval()
             preds = []
