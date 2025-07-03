@@ -121,9 +121,12 @@ def run_ai_prediction():
                 preds.append(pred)
 
             forecast_dates = pd.date_range(start=last_known.index[-pred_days], periods=pred_days)
-            forecast_close = scaler.inverse_transform(
-                np.hstack([np.array(preds).reshape(-1, 1), np.zeros((pred_days, len(features) - 1))])
-            )[:, 0]
+            preds_reshaped = np.array(preds).reshape(-1, 1)
+            dummy_features = np.zeros((pred_days, len(features) - 1))
+            input_for_inverse = np.concatenate([preds_reshaped, dummy_features], axis=1)
+            st.write("📊 Input for inverse transform:", input_for_inverse.shape)  # debug line
+            
+            forecast_close = scaler.inverse_transform(input_for_inverse)[:, 0]
             forecast_df = pd.DataFrame({"Date": forecast_dates, "Predicted Close": forecast_close})
 
             # --- Display Signal ---
