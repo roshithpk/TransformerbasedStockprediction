@@ -46,7 +46,7 @@ def create_sequences(data, seq_len):
         y = data[i + seq_len, 0]  # Predict Close only
         xs.append(x)
         ys.append(y)
-    return np.array(xs), np.array(ys).flatten()
+    return np.array(xs), np.array(ys).reshape(-1, 1)  # Reshape y to (n_samples, 1)
 
 # --- Main Function ---
 def run_ai_prediction():
@@ -79,14 +79,16 @@ def run_ai_prediction():
             loss_fn = nn.MSELoss()
             optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
+            # Training loop
             model.train()
             for epoch in range(10):
                 optimizer.zero_grad()
                 output = model(X_tensor)
-                loss = loss_fn(output.view(-1), y_tensor)
+                loss = loss_fn(output, y_tensor)
                 loss.backward()
                 optimizer.step()
 
+            # Prediction loop
             model.eval()
             preds = []
             input_seq = X_tensor[-1].unsqueeze(0)
@@ -95,10 +97,13 @@ def run_ai_prediction():
             for step in range(pred_days):
                 with torch.no_grad():
                     pred = model(input_seq).item()
-                    st.write(f"🔢 Step {step + 1} — Predicted scaled Close:", pred)
+                
+                # Create array for inverse transform
+                pred_array = np.array([[pred] + [0]*(len(features)-1)])
+                pred_close = scaler.inverse_transform(pred_array)[0][0]
+                preds.append(pred_close)
 
-                pred_close = scaler.inverse_transform([[pred] + [0]*(len(features)-1)])[0][0]
-
+                # Update for next prediction
                 new_row = pd.Series(index=last_known.columns, dtype='float64')
                 new_row['Close'] = pred_close
                 next_date = last_known.index[-1] + timedelta(days=1)
@@ -106,26 +111,10 @@ def run_ai_prediction():
                 last_known = add_indicators(last_known)
                 last_scaled = scaler.transform(last_known[features].iloc[-seq_len:])
                 input_seq = torch.tensor(last_scaled[np.newaxis], dtype=torch.float32)
-                preds.append(pred)
 
-            # --- Inverse Transform Forecasts ---
-            try:
-                preds_array = np.array(preds)
-                preds_reshaped = preds_array.reshape(-1, 1)
-                dummy_features = np.zeros((pred_days, len(features) - 1))
-                inverse_input = np.concatenate([preds_reshaped, dummy_features], axis=1)
-                st.write("🧪 inverse_input shape:", inverse_input.shape)
-
-                inverse_output = scaler.inverse_transform(inverse_input)
-                forecast_close = inverse_output[:, 0]
-                st.write("✅ forecast_close shape:", forecast_close.shape)
-
-                forecast_dates = pd.date_range(start=last_known.index[-pred_days], periods=pred_days)
-                forecast_df = pd.DataFrame({"Date": forecast_dates, "Predicted Close": forecast_close})
-
-            except Exception as debug_error:
-                st.error(f"🛑 Forecast conversion failed: {debug_error}")
-                return
+            # Create forecast dataframe
+            forecast_dates = pd.date_range(start=df.index[-1] + timedelta(days=1), periods=pred_days)
+            forecast_df = pd.DataFrame({"Date": forecast_dates, "Predicted Close": preds})
 
             # --- Display Signal ---
             current_price = df['Close'].iloc[-1]
