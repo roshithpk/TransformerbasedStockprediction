@@ -148,6 +148,7 @@ def run_ai_prediction():
             status_text.text("✅ Training completed!")
 
             # --- Prediction with Proper Sequence Updating ---
+            # --- In your prediction loop (replace the existing code) ---
             model.eval()
             preds = []
             pred_dates = []
@@ -155,13 +156,19 @@ def run_ai_prediction():
             last_known = df.copy()
             current_date = last_known.index[-1]
             
-            for i in range(pred_days):
-                # Skip weekends
-                current_date = next_business_day(current_date)
-                
+            # Get the actual business days we need to predict
+            business_days_to_predict = []
+            temp_date = current_date
+            for _ in range(pred_days):
+                temp_date = next_business_day(temp_date)
+                business_days_to_predict.append(temp_date)
+            
+            st.write(f"📅 Business days to predict: {[d.date() for d in business_days_to_predict]}")
+            
+            for target_date in business_days_to_predict:
                 with torch.no_grad():
                     pred_scaled = model(current_sequence).item()
-                    st.write(f"🔢 Forecast {i+1}: Raw prediction value: {pred_scaled}")
+                    st.write(f"🔢 Forecast for {target_date.date()}: Raw prediction value: {pred_scaled}")
                 
                 # Create new row with all features
                 new_row = scaled[-1].copy()
@@ -175,7 +182,7 @@ def run_ai_prediction():
                 new_row_df = pd.DataFrame(
                     [[pred_close] + [np.nan]*(len(last_known.columns)-1)],
                     columns=last_known.columns,
-                    index=[current_date]
+                    index=[target_date]
                 )
                 last_known = pd.concat([last_known, new_row_df])
                 
@@ -185,22 +192,25 @@ def run_ai_prediction():
                 # Get new scaled values (only take the last seq_len points)
                 new_scaled = scaler.transform(last_known[features].iloc[-seq_len:])
                 
-                # Update sequence for next prediction
-                current_sequence = torch.roll(current_sequence, shifts=-1, dims=1)
-                current_sequence[0, -1] = torch.tensor(new_scaled[-1])
+                # Properly update the sequence (VERY IMPORTANT FIX)
+                new_sequence = np.vstack([current_sequence.numpy()[0, 1:], new_scaled[-1]])
+                current_sequence = torch.tensor(new_sequence[np.newaxis, :], dtype=torch.float32)
                 
-                st.write(f"📅 Added row for date {current_date.date()} with Close = {pred_close}")
+                st.write(f"📅 Added row for date {target_date.date()} with Close = {pred_close}")
                 st.write(f"📈 Input to model for next step — shape: {current_sequence.shape}")
                 st.write(f"📈 Last element in sequence: {current_sequence[0,-1].numpy()}")
                 
                 preds.append(pred_close)
-                pred_dates.append(current_date)
-
-            # --- Generate Forecast DataFrame ---
+                pred_dates.append(target_date)
+            
+            # --- Then when creating the forecast DataFrame ---
             forecast_df = pd.DataFrame({
                 "Date": pred_dates,
                 "Predicted Close": preds
             })
+            
+            # Filter out any weekends that might have slipped through (double check)
+            forecast_df = forecast_df[forecast_df['Date'].dt.dayofweek < 5]
 
             # --- Model Signal ---
             current_price = float(df['Close'].iloc[-1])
