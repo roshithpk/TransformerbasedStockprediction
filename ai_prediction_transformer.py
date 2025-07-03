@@ -11,7 +11,7 @@ import torch.nn as nn
 from ta.momentum import RSIIndicator
 from ta.trend import EMAIndicator, MACD, ADXIndicator
 from ta.volatility import AverageTrueRange
-from model_manager_streamlit import save_model_streamlit as save_model_dialog, load_model_streamlit as load_model_dialog
+#from model_manager_streamlit import save_model_streamlit as save_model_dialog, load_model_streamlit as load_model_dialog
 
 import math
 
@@ -116,9 +116,9 @@ def run_ai_prediction():
             if model is None:
                 model = TransformerModel(
                     input_size=len(features),
-                    d_model=128,
-                    nhead=8,
-                    num_layers=4,
+                    d_model=64,
+                    nhead=4,
+                    num_layers=2,
                     dropout=0.2
                 )
             
