@@ -105,9 +105,9 @@ def run_ai_prediction():
 
             model = TransformerModel(
                 input_size=len(features),
-                d_model=128,
-                nhead=8,
-                num_layers=4,
+                d_model=64,
+                nhead=4,
+                num_layers=2,
                 dropout=0.2
             )
 
