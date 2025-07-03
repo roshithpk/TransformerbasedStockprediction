@@ -5,7 +5,7 @@ import numpy as np
 from datetime import timedelta
 import plotly.graph_objects as go
 from sklearn.preprocessing import MinMaxScaler
-from st_aggrid import AgGrid, GridfvOptionsBuilder
+from st_aggrid import AgGrid, GridOptionsBuilder
 import torch
 import torch.nn as nn
 from ta.momentum import RSIIndicator
@@ -49,20 +49,19 @@ class TransformerModel(nn.Module):
 # --- Feature Engineering ---
 def add_indicators(df):
     df = df.copy()
-    df['RSI'] = RSIIndicator(close=df['Close'].astype(float).squeeze(), window=14).rsi()
-    df['EMA20'] = EMAIndicator(close=df['Close'].astype(float).squeeze(), window=20).ema_indicator()
-    df['MACD'] = MACD(close=df['Close'].astype(float).squeeze()).macd()
+    df['RSI'] = RSIIndicator(close=df['Close'].squeeze(), window=14).rsi()
+    df['EMA20'] = EMAIndicator(close=df['Close'].squeeze(), window=20).ema_indicator()
+    df['MACD'] = MACD(close=df['Close'].squeeze()).macd()
     df['ADX'] = ADXIndicator(
-        high=df['High'].astype(float).squeeze(),
-        low=df['Low'].astype(float).squeeze(),
-        close=df['Close'].astype(float).squeeze()
+        high=df['High'].squeeze(),
+        low=df['Low'].squeeze(),
+        close=df['Close'].squeeze()
     ).adx()
     df['ATR'] = AverageTrueRange(
-        high=df['High'].astype(float).squeeze(),
-        low=df['Low'].astype(float).squeeze(),
-        close=df['Close'].astype(float).squeeze()
+        high=df['High'].squeeze(),
+        low=df['Low'].squeeze(),
+        close=df['Close'].squeeze()
     ).average_true_range()
-
     df.dropna(inplace=True)
     return df
 
@@ -106,11 +105,12 @@ def run_ai_prediction():
             model = TransformerModel(input_size=len(features))
             loss_fn = nn.MSELoss()
             optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-            # --- Training ---
+
+            # --- Training with Progress Bar ---
+            model.train()
             progress_bar = st.progress(0)
             status_text = st.empty()
 
-            model.train()
             for epoch in range(50):
                 optimizer.zero_grad()
                 output = model(X_tensor)
@@ -118,13 +118,14 @@ def run_ai_prediction():
                 loss.backward()
                 optimizer.step()
 
-             # Update progress
+                # Update progress
                 percent_complete = int(((epoch + 1) / 50) * 100)
                 progress_bar.progress(percent_complete)
                 status_text.text(f"Training progress: {percent_complete}% (Epoch {epoch+1}/50)")
-            # Clear progress bar after done
+
             status_text.text("✅ Training completed!")
 
+            # --- Prediction ---
             model.eval()
             preds = []
             input_seq = X_tensor[-1].unsqueeze(0)
@@ -133,7 +134,6 @@ def run_ai_prediction():
             for i in range(pred_days):
                 with torch.no_grad():
                     pred = model(input_seq).item()
-                st.write(f"🔢 Forecast {i+1}: Raw prediction: {pred}")
                 pred_close = scaler.inverse_transform([[pred] + [0]*(len(features)-1)])[0][0]
                 new_row = pd.Series(index=last_known.columns, dtype='float64')
                 new_row['Close'] = pred_close
@@ -144,12 +144,13 @@ def run_ai_prediction():
                 input_seq = torch.tensor(last_scaled[np.newaxis], dtype=torch.float32)
                 preds.append(pred)
 
-            forecast_dates = pd.date_range(start=df.index[-1] + timedelta(days=1), periods=pred_days)
-
+            # Forecast dates from *next day*
+            forecast_dates = pd.date_range(start=last_known.index[-pred_days], periods=pred_days)
             forecast_close = scaler.inverse_transform(
                 np.hstack([np.array(preds).reshape(-1, 1), np.zeros((pred_days, len(features)-1))]))[:, 0]
             forecast_df = pd.DataFrame({"Date": forecast_dates, "Predicted Close": forecast_close})
 
+            # --- Model Signal ---
             current_price = float(df['Close'].iloc[-1])
             predicted_price = float(forecast_df['Predicted Close'].iloc[0])
             pct_diff = ((predicted_price - current_price) / current_price) * 100
@@ -172,15 +173,18 @@ def run_ai_prediction():
             else:
                 st.warning(f"🔄 SIGNAL: **{signal}**  \n**Reason:** {reason}")
 
+            # --- Metrics ---
             col1, col2 = st.columns(2)
             col1.metric("Current Price", f"₹{current_price:.2f}")
             col2.metric("Predicted Price", f"₹{predicted_price:.2f}", f"{pct_diff:.2f}%")
 
+            # --- Forecast Table ---
             gb = GridOptionsBuilder.from_dataframe(forecast_df)
             gb.configure_default_column(resizable=True, wrapText=True)
             grid_options = gb.build()
             AgGrid(forecast_df, gridOptions=grid_options, theme="balham", height=350)
 
+            # --- Plot Chart ---
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=df.index[-60:], y=df['Close'].iloc[-60:], mode='lines', name='Historical'))
             fig.add_trace(go.Scatter(x=forecast_df['Date'], y=forecast_df['Predicted Close'], mode='lines+markers', name='Predicted'))
