@@ -11,20 +11,39 @@ import torch.nn as nn
 from ta.momentum import RSIIndicator
 from ta.trend import EMAIndicator, MACD, ADXIndicator
 from ta.volatility import AverageTrueRange
+import math
+
+# --- Positional Encoding ---
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=500):
+        super().__init__()
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        x = x + self.pe[:, :x.size(1)]
+        return x
 
 # --- Transformer Model ---
 class TransformerModel(nn.Module):
-    def __init__(self, input_size, d_model=64, nhead=4, num_layers=2, dropout=0.1):
+    def __init__(self, input_size, d_model=64, nhead=4, num_layers=2, dropout=0.1, max_len=500):
         super().__init__()
         self.input_linear = nn.Linear(input_size, d_model)
+        self.pos_encoder = PositionalEncoding(d_model, max_len=max_len)
         encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dropout=dropout)
         self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         self.output_linear = nn.Linear(d_model, 1)
 
     def forward(self, src):
         src = self.input_linear(src)
-        src = self.transformer_encoder(src)
-        output = self.output_linear(src[:, -1, :])
+        src = self.pos_encoder(src)
+        output = self.transformer_encoder(src)
+        output = self.output_linear(output[:, -1, :])
         return output
 
 # --- Feature Engineering ---
@@ -46,7 +65,7 @@ def create_sequences(data, seq_len):
         y = data[i + seq_len, 0]  # Predict Close only
         xs.append(x)
         ys.append(y)
-    return np.array(xs), np.array(ys).reshape(-1, 1)  # Reshape y to (n_samples, 1)
+    return np.array(xs), np.array(ys).flatten()
 
 # --- Main Function ---
 def run_ai_prediction():
@@ -79,31 +98,24 @@ def run_ai_prediction():
             loss_fn = nn.MSELoss()
             optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
-            # Training loop
             model.train()
             for epoch in range(10):
                 optimizer.zero_grad()
                 output = model(X_tensor)
-                loss = loss_fn(output, y_tensor)
+                loss = loss_fn(output.view(-1), y_tensor)
                 loss.backward()
                 optimizer.step()
 
-            # Prediction loop
             model.eval()
             preds = []
             input_seq = X_tensor[-1].unsqueeze(0)
             last_known = df.copy()
 
-            for step in range(pred_days):
+            for i in range(pred_days):
                 with torch.no_grad():
                     pred = model(input_seq).item()
-                
-                # Create array for inverse transform
-                pred_array = np.array([[pred] + [0]*(len(features)-1)])
-                pred_close = scaler.inverse_transform(pred_array)[0][0]
-                preds.append(pred_close)
-
-                # Update for next prediction
+                st.write(f"🔢 Forecast {i+1}: Raw prediction: {pred}")
+                pred_close = scaler.inverse_transform([[pred] + [0]*(len(features)-1)])[0][0]
                 new_row = pd.Series(index=last_known.columns, dtype='float64')
                 new_row['Close'] = pred_close
                 next_date = last_known.index[-1] + timedelta(days=1)
@@ -111,12 +123,13 @@ def run_ai_prediction():
                 last_known = add_indicators(last_known)
                 last_scaled = scaler.transform(last_known[features].iloc[-seq_len:])
                 input_seq = torch.tensor(last_scaled[np.newaxis], dtype=torch.float32)
+                preds.append(pred)
 
-            # Create forecast dataframe
-            forecast_dates = pd.date_range(start=df.index[-1] + timedelta(days=1), periods=pred_days)
-            forecast_df = pd.DataFrame({"Date": forecast_dates, "Predicted Close": preds})
+            forecast_dates = pd.date_range(start=last_known.index[-pred_days], periods=pred_days)
+            forecast_close = scaler.inverse_transform(
+                np.hstack([np.array(preds).reshape(-1, 1), np.zeros((pred_days, len(features)-1))]))[:, 0]
+            forecast_df = pd.DataFrame({"Date": forecast_dates, "Predicted Close": forecast_close})
 
-            # --- Display Signal ---
             current_price = df['Close'].iloc[-1]
             predicted_price = forecast_df['Predicted Close'].iloc[0]
             pct_diff = ((predicted_price - current_price) / current_price) * 100
@@ -139,25 +152,19 @@ def run_ai_prediction():
             else:
                 st.warning(f"🔄 SIGNAL: **{signal}**  \n**Reason:** {reason}")
 
-            # --- Show Metrics ---
             col1, col2 = st.columns(2)
             col1.metric("Current Price", f"₹{current_price:.2f}")
             col2.metric("Predicted Price", f"₹{predicted_price:.2f}", f"{pct_diff:.2f}%")
 
-            # --- Show Forecast Table ---
             gb = GridOptionsBuilder.from_dataframe(forecast_df)
             gb.configure_default_column(resizable=True, wrapText=True)
             grid_options = gb.build()
-
             AgGrid(forecast_df, gridOptions=grid_options, theme="balham", height=350)
 
-            # --- Plot ---
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=df.index[-60:], y=df['Close'].iloc[-60:], mode='lines', name='Historical'))
-            fig.add_trace(go.Scatter(x=forecast_df['Date'], y=forecast_df['Predicted Close'],
-                                     mode='lines+markers', name='Predicted'))
-            fig.update_layout(title=f"{user_stock.upper()} Forecast",
-                              xaxis_title="Date", yaxis_title="Close Price")
+            fig.add_trace(go.Scatter(x=forecast_df['Date'], y=forecast_df['Predicted Close'], mode='lines+markers', name='Predicted'))
+            fig.update_layout(title=f"{user_stock.upper()} Forecast", xaxis_title="Date", yaxis_title="Close Price")
             st.plotly_chart(fig, use_container_width=True)
 
         except Exception as e:
