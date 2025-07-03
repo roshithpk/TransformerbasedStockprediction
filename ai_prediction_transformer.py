@@ -145,7 +145,8 @@ def run_ai_prediction():
                 preds.append(pred)
 
             # Forecast dates from *next day*
-            forecast_dates = pd.date_range(start=last_known.index[-pred_days], periods=pred_days)
+            forecast_dates = pd.date_range(start=df.index[-1] + timedelta(days=1), periods=pred_days)
+
             forecast_close = scaler.inverse_transform(
                 np.hstack([np.array(preds).reshape(-1, 1), np.zeros((pred_days, len(features)-1))]))[:, 0]
             forecast_df = pd.DataFrame({"Date": forecast_dates, "Predicted Close": forecast_close})
