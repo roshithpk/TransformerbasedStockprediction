@@ -11,6 +11,7 @@ import torch.nn as nn
 from ta.momentum import RSIIndicator
 from ta.trend import EMAIndicator, MACD, ADXIndicator
 from ta.volatility import AverageTrueRange
+from model_manager import save_model_dialog, load_model_dialog
 import math
 
 # --- Positional Encoding ---
