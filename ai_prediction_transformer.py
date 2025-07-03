@@ -134,14 +134,21 @@ def run_ai_prediction():
             for i in range(pred_days):
                 with torch.no_grad():
                     pred = model(input_seq).item()
+                st.write(f"🔢 Forecast {i+1}: Raw prediction value: {pred}")
+                st.write(f"📊 Input to scaler.inverse_transform (pred only): {[pred] + [0]*(len(features)-1)}")
+
                 pred_close = scaler.inverse_transform([[pred] + [0]*(len(features)-1)])[0][0]
+                st.write(f"💡 Predicted Close after inverse transform: {pred_close}")
                 new_row = pd.Series(index=last_known.columns, dtype='float64')
                 new_row['Close'] = pred_close
                 next_date = last_known.index[-1] + timedelta(days=1)
                 last_known.loc[next_date] = new_row
                 last_known = add_indicators(last_known)
+                st.write(f"📅 Added row for date {next_date.date()} with Close = {pred_close}")
                 last_scaled = scaler.transform(last_known[features].iloc[-seq_len:])
                 input_seq = torch.tensor(last_scaled[np.newaxis], dtype=torch.float32)
+                st.write(f"📈 Input to model for next step — shape: {input_seq.shape}")
+                st.write(f"📈 Last sequence to model: {input_seq.numpy().squeeze()[-1]}")
                 preds.append(pred)
 
             # Forecast dates from *next day*
