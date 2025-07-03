@@ -11,8 +11,6 @@ import torch.nn as nn
 from ta.momentum import RSIIndicator
 from ta.trend import EMAIndicator, MACD, ADXIndicator
 from ta.volatility import AverageTrueRange
-#from model_manager_streamlit import save_model_streamlit as save_model_dialog, load_model_streamlit as load_model_dialog
-
 import math
 
 # --- Positional Encoding ---
@@ -39,7 +37,10 @@ class TransformerModel(nn.Module):
         self.pos_encoder = PositionalEncoding(d_model, max_len=max_len)
         encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dropout=dropout)
         self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-        self.output_linear = nn.Linear(d_model, 1)
+        self.output_linear = nn.Sequential(
+            nn.Linear(d_model, 1),
+            nn.Sigmoid()  # Constrain outputs to 0-1 range
+        )
 
     def forward(self, src):
         src = self.input_linear(src)
@@ -51,8 +52,10 @@ class TransformerModel(nn.Module):
 # --- Feature Engineering ---
 def add_indicators(df):
     df = df.copy()
-    df['RSI'] = RSIIndicator(close=df['Close'].squeeze(), window=14).rsi()
-    df['EMA20'] = EMAIndicator(close=df['Close'].squeeze(), window=20).ema_indicator()
+    if len(df) >= 14:  # Minimum required for RSI
+        df['RSI'] = RSIIndicator(close=df['Close'].squeeze(), window=14).rsi()
+    if len(df) >= 20:  # Minimum required for EMA20
+        df['EMA20'] = EMAIndicator(close=df['Close'].squeeze(), window=20).ema_indicator()
     df['MACD'] = MACD(close=df['Close'].squeeze()).macd()
     df['ADX'] = ADXIndicator(
         high=df['High'].squeeze(),
@@ -64,7 +67,6 @@ def add_indicators(df):
         low=df['Low'].squeeze(),
         close=df['Close'].squeeze()
     ).average_true_range()
-    #df['Volume'] = df['Volume'] 
     df.dropna(inplace=True)
     return df
 
@@ -105,95 +107,85 @@ def run_ai_prediction():
             X_tensor = torch.tensor(X, dtype=torch.float32)
             y_tensor = torch.tensor(y, dtype=torch.float32)
 
-# Let user choose whether to load or train
-            model = None
-            use_saved = st.radio("⚙️ Use saved model?", ["Train New Model", "Load Saved Model"])
+            model = TransformerModel(
+                input_size=len(features),
+                d_model=64,
+                nhead=4,
+                num_layers=2,
+                dropout=0.2
+            )
             
-            if use_saved == "Load Saved Model":
-                model = load_model_dialog(TransformerModel, input_size=len(features))
+            loss_fn = nn.MSELoss()
+            optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
             
-            # If not loaded, train a new model
-            if model is None:
-                model = TransformerModel(
-                    input_size=len(features),
-                    d_model=64,
-                    nhead=4,
-                    num_layers=2,
-                    dropout=0.2
-                )
+            # --- Training with Progress Bar ---
+            model.train()
+            progress_bar = st.progress(0)
+            status_text = st.empty()
             
-                loss_fn = nn.MSELoss()
-                optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+            for epoch in range(50):
+                optimizer.zero_grad()
+                output = model(X_tensor)
+                loss = loss_fn(output.view(-1), y_tensor)
+                loss.backward()
+                optimizer.step()
             
-                # --- Training with Progress Bar ---
-                model.train()
-                progress_bar = st.progress(0)
-                status_text = st.empty()
+                percent_complete = int(((epoch + 1) / 50) * 100)
+                progress_bar.progress(percent_complete)
+                status_text.text(f"Training progress: {percent_complete}% (Epoch {epoch+1}/50)")
             
-                for epoch in range(50):
-                    optimizer.zero_grad()
-                    output = model(X_tensor)
-                    loss = loss_fn(output.view(-1), y_tensor)
-                    loss.backward()
-                    optimizer.step()
-            
-                    percent_complete = int(((epoch + 1) / 50) * 100)
-                    progress_bar.progress(percent_complete)
-                    status_text.text(f"Training progress: {percent_complete}% (Epoch {epoch+1}/50)")
-            
-                status_text.text("✅ Training completed!")
-            
-                # Ask user to save the trained model
-                if st.checkbox("💾 Save this trained model?"):
-                    save_model_dialog(model, stock_name=user_stock, last_date=df.index[-1].date())
+            status_text.text("✅ Training completed!")
 
-
-            # --- Prediction ---
-
+            # --- Prediction with Proper Sequence Updating ---
             model.eval()
             preds = []
-            input_seq = X_tensor[-1].unsqueeze(0)
+            current_sequence = X_tensor[-1:].clone()  # Start with last known sequence
             last_known = df.copy()
             
             for i in range(pred_days):
                 with torch.no_grad():
-                    pred = model(input_seq).item()
-            
-                st.write(f"🔢 Forecast {i+1}: Raw prediction value: {pred}")
-            
-                # ✅ Use last known scaled row for realistic inverse transformation
-                last_scaled_row = scaler.transform(last_known[features].iloc[-1:].values)[0]
-                last_scaled_row[0] = pred  # Replace only the 'Close' value
-                pred_close = scaler.inverse_transform([last_scaled_row])[0][0]
+                    pred_scaled = model(current_sequence).item()
+                    st.write(f"🔢 Forecast {i+1}: Raw prediction value: {pred_scaled}")
+                
+                # Create new row with all features
+                new_row = scaled[-1].copy()
+                new_row[0] = pred_scaled  # Update Close price
+                
+                # Inverse transform
+                pred_close = scaler.inverse_transform([new_row])[0][0]
                 st.write(f"📊 Inverse transformed Close = {pred_close}")
-            
-                # 🆕 Prepare new row with only Close (others will be computed using indicators)
-                new_row = pd.DataFrame({col: [np.nan] for col in last_known.columns})
-                new_row.index = [last_known.index[-1] + timedelta(days=1)]
-                new_row['Close'] = pred_close
-            
-                # Add new row and recompute indicators
-                last_known = pd.concat([last_known, new_row])
+                
+                # Update dataframe with new prediction
+                new_date = last_known.index[-1] + timedelta(days=1)
+                new_row_df = pd.DataFrame(
+                    [[pred_close] + [np.nan]*(len(last_known.columns)-1)],
+                    columns=last_known.columns,
+                    index=[new_date]
+                )
+                last_known = pd.concat([last_known, new_row_df])
+                
+                # Recompute indicators for the extended dataframe
                 last_known = add_indicators(last_known)
-            
-                # Rescale last sequence for next input
-                last_scaled_seq = scaler.transform(last_known[features].iloc[-seq_len:])
-                input_seq = torch.tensor(last_scaled_seq[np.newaxis], dtype=torch.float32)
-            
-                st.write(f"📅 Added row for date {new_row.index[0].date()} with Close = {pred_close}")
-                st.write(f"📈 Input to model for next step — shape: {input_seq.shape}")
-                st.write(f"📈 Last sequence to model: {input_seq.numpy().squeeze()[-1]}")
-            
+                
+                # Get new scaled values (only take the last seq_len points)
+                new_scaled = scaler.transform(last_known[features].iloc[-seq_len:])
+                
+                # Update sequence for next prediction
+                current_sequence = torch.roll(current_sequence, shifts=-1, dims=1)
+                current_sequence[0, -1] = torch.tensor(new_scaled[-1])
+                
+                st.write(f"📅 Added row for date {new_date.date()} with Close = {pred_close}")
+                st.write(f"📈 Input to model for next step — shape: {current_sequence.shape}")
+                st.write(f"📈 Last element in sequence: {current_sequence[0,-1].numpy()}")
+                
                 preds.append(pred_close)
 
-
-
-            # Forecast dates from *next day*
-            forecast_dates = pd.date_range(start=df.index[-1] + timedelta(days=1), periods=pred_days)
-
-            forecast_close = scaler.inverse_transform(
-                np.hstack([np.array(preds).reshape(-1, 1), np.zeros((pred_days, len(features)-1))]))[:, 0]
-            forecast_df = pd.DataFrame({"Date": forecast_dates, "Predicted Close": forecast_close})
+            # --- Generate Forecast DataFrame ---
+            forecast_dates = [df.index[-1] + timedelta(days=i+1) for i in range(pred_days)]
+            forecast_df = pd.DataFrame({
+                "Date": forecast_dates,
+                "Predicted Close": preds
+            })
 
             # --- Model Signal ---
             current_price = float(df['Close'].iloc[-1])
@@ -231,9 +223,23 @@ def run_ai_prediction():
 
             # --- Plot Chart ---
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=df.index[-60:], y=df['Close'].iloc[-60:], mode='lines', name='Historical'))
-            fig.add_trace(go.Scatter(x=forecast_df['Date'], y=forecast_df['Predicted Close'], mode='lines+markers', name='Predicted'))
-            fig.update_layout(title=f"{user_stock.upper()} Forecast", xaxis_title="Date", yaxis_title="Close Price")
+            fig.add_trace(go.Scatter(
+                x=df.index[-60:], 
+                y=df['Close'].iloc[-60:], 
+                mode='lines', 
+                name='Historical'
+            ))
+            fig.add_trace(go.Scatter(
+                x=forecast_df['Date'], 
+                y=forecast_df['Predicted Close'], 
+                mode='lines+markers', 
+                name='Predicted'
+            ))
+            fig.update_layout(
+                title=f"{user_stock.upper()} Forecast",
+                xaxis_title="Date",
+                yaxis_title="Close Price"
+            )
             st.plotly_chart(fig, use_container_width=True)
 
         except Exception as e:
