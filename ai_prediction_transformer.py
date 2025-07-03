@@ -51,6 +51,7 @@ def add_indicators(df):
     df = df.copy()
     st.write("hi")
     df['RSI'] = RSIIndicator(close=df['Close'], window=14).rsi()
+    st.write("hi")
     df['EMA20'] = EMAIndicator(close=df['Close'], window=20).ema_indicator()
     df['MACD'] = MACD(close=df['Close']).macd()
     df['ADX'] = ADXIndicator(high=df['High'], low=df['Low'], close=df['Close']).adx()
