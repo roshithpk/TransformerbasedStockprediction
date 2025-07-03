@@ -103,7 +103,14 @@ def run_ai_prediction():
             X_tensor = torch.tensor(X, dtype=torch.float32)
             y_tensor = torch.tensor(y, dtype=torch.float32)
 
-            model = TransformerModel(input_size=len(features))
+            model = TransformerModel(
+                input_size=len(features),
+                d_model=128,
+                nhead=8,
+                num_layers=4,
+                dropout=0.2
+            )
+
             loss_fn = nn.MSELoss()
             optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
