@@ -62,6 +62,7 @@ def add_indicators(df):
         low=df['Low'].squeeze(),
         close=df['Close'].squeeze()
     ).average_true_range()
+    df['Volume'] = df['Volume'] 
     df.dropna(inplace=True)
     return df
 
@@ -93,7 +94,7 @@ def run_ai_prediction():
                 return
 
             df = add_indicators(df)
-            features = ['Close', 'RSI', 'EMA20', 'MACD', 'ADX', 'ATR']
+            features = ['Close', 'RSI', 'EMA20', 'MACD', 'ADX', 'ATR','Volume']
             scaler = MinMaxScaler()
             scaled = scaler.fit_transform(df[features])
 
