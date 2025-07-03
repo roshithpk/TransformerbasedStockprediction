@@ -49,6 +49,7 @@ class TransformerModel(nn.Module):
 # --- Feature Engineering ---
 def add_indicators(df):
     df = df.copy()
+    st.write("hi")
     df['RSI'] = RSIIndicator(close=df['Close'], window=14).rsi()
     df['EMA20'] = EMAIndicator(close=df['Close'], window=20).ema_indicator()
     df['MACD'] = MACD(close=df['Close']).macd()
